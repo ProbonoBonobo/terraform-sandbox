@@ -1,6 +1,5 @@
-provider "aws" {
-  region = var.region
-}
+variable "AWS_ACCESS_KEY_ID" {}
+variable "AWS_SECRET_ACCESS_KEY" {}
 
 data "aws_ami" "ubuntu" {
   most_recent = true
@@ -16,6 +15,13 @@ data "aws_ami" "ubuntu" {
   }
 
   owners = ["099720109477"] # Canonical
+}
+
+provider "aws" {
+  region  = "us-west-2"
+  profile = "personal"
+  access_key = var.AWS_ACCESS_KEY_ID
+  secret_key = var.AWS_SECRET_ACCESS_KEY
 }
 
 resource "aws_instance" "ubuntu" {
