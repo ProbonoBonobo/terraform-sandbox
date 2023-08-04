@@ -28,32 +28,62 @@ provider "aws" {
   secret_key = var.AWS_SECRET_ACCESS_KEY
 }
 
-resource "aws_iam_role_policy_attachment" "lambda_sqs_policy" {
-  role       = aws_iam_role.lambda_role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSQSFullAccess"
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_logs_policy" {
-  role       = aws_iam_role.lambda_role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_lambda_function" "my_lambda" {
+resource "aws_lambda_function" "event_handler" {
   source_code_hash = <<EOT
 filebase64sha256("lambda_function_payload.zip")
 EOT
   runtime          = "python3.8"
-  role             = aws_iam_role.lambda_role.arn
   handler          = "main.lambda_handler"
-  function_name    = "my_lambda_function"
   filename         = "lambda_function_payload.zip"
+  role             = aws_iam_role.handler_role.arn
+  function_name    = "event_handler"
+
+  dead_letter_config {
+    target_arn = aws_sqs_queue.sqs_dlq.arn
+  }
 }
 
-resource "aws_lambda_event_source_mapping" "sqs_lambda_trigger" {
-  function_name    = aws_lambda_function.my_lambda.function_name
-  event_source_arn = aws_sqs_queue.my_queue.arn
-  enabled          = true
-  batch_size       = 5
+resource "aws_iam_role" "handler_role" {
+  assume_role_policy = <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "lambda.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+POLICY
 }
 
+resource "aws_sqs_queue" "sqs_intake_queue" {
+}
 
+resource "aws_lambda_event_source_mapping" "lambda_event_source_mapping_5" {
+  function_name    = aws_lambda_function.event_handler.arn
+  event_source_arn = aws_sqs_queue.sqs_intake_queue.arn
+}
+
+resource "aws_sqs_queue" "sqs_dlq" {
+  message_retention_seconds = 1209600
+}
+
+resource "aws_cloudwatch_metric_alarm" "cloudwatch_dlq_alarm" {
+  unit                = "Count"
+  statistic           = "Maximum"
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateNumberOfMessagesVisible"
+  evaluation_periods  = 1
+  datapoints_to_alarm = 1
+  comparison_operator = "GreaterThanThreshold"
+  alarm_name          = "DLQ Alarm"
+  alarm_description   = "Dead letter queue is not empty"
+
+  dimensions = {
+    QueueName = "sqs_dlq"
+  }
+}
